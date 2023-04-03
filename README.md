@@ -34,6 +34,18 @@ If you're on Linux, you might need to update the serial port permissions.
     <output_h>    Optional: The scaler's output horizontal resolution [default: 1920]
     <output_v>    Optional: The scaler's output vertical resolution [default: 1080]
 
+#### Compiling (on Linux/WSL)
+
+* Install Rust using your package manager or from [rustup](https://rustup.rs/)
+* Then either:
+  * Use `git` to clone the repository 
+  * OR click on the green `Code` button above, then Download ZIP and unzip it somewhere.
+* Open the shell of your choice
+* Switch to the folder you put the code in
+* type `cargo build --release`
+* The `extron` binary will be in the `./target/release/` that was just created.
+
+
 #### Known issues / Improvements
 
 * It assumes that the output resolution is always bigger than the input resolution in both axis.
