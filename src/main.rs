@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use std::io::{self, Write};
 use std::str::FromStr;
 use std::time::Duration;
@@ -12,6 +13,20 @@ struct State {
     pub step: CommandFlow,
     pub input_size: Resolution,
     pub output_size: Resolution,
+    pub wait: bool,
+}
+
+impl State {
+    pub fn set_output_size(&mut self, r: Resolution) {
+        self.output_size = r
+    }
+
+    pub fn reset(&mut self) {
+        self.incoming_command.clear();
+        self.incoming_command.shrink_to_fit();
+        self.step = CommandFlow::Uninitialized;
+        self.input_size = Resolution { h: 0, v: 0 };
+    }
 }
 
 impl Default for State {
@@ -21,7 +36,23 @@ impl Default for State {
             step: CommandFlow::Uninitialized,
             input_size: Resolution { h: 0, v: 0 },
             output_size: Resolution { h: 0, v: 0 },
+            wait: false,
         }
+    }
+}
+
+impl Display for State {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Step: {:?}, Input size: Hor {}, Ver {}, Output size: Hor {}, Ver {}, Waiting: {}",
+            self.step,
+            self.input_size.h,
+            self.input_size.v,
+            self.output_size.h,
+            self.output_size.v,
+            self.wait
+        )
     }
 }
 
@@ -36,7 +67,7 @@ enum CommandFlow {
     SetHCenter,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 struct Resolution {
     pub h: u32,
     pub v: u32,
@@ -93,16 +124,18 @@ fn main() -> Result<(), String> {
 
     let port_name = matches.value_of("port").unwrap();
     let baud_rate = matches.value_of("baud").unwrap().parse::<u32>().unwrap();
-    state.output_size.h = matches
-        .value_of("output_h")
-        .unwrap()
-        .parse::<u32>()
-        .unwrap();
-    state.output_size.v = matches
-        .value_of("output_v")
-        .unwrap()
-        .parse::<u32>()
-        .unwrap();
+    state.set_output_size(Resolution {
+        h: matches
+            .value_of("output_h")
+            .unwrap()
+            .parse::<u32>()
+            .unwrap(),
+        v: matches
+            .value_of("output_v")
+            .unwrap()
+            .parse::<u32>()
+            .unwrap(),
+    });
 
     println!("Receiving data on {} at {} baud", &port_name, &baud_rate);
     println!("Output resolution: {:?}", state.output_size);
@@ -131,11 +164,15 @@ fn main() -> Result<(), String> {
                         let response = decode_response(state.incoming_command.drain(..).collect());
                         println!("Extron response: {:?}", response);
                         update_state(response, &mut state);
-                        println!("New state: {:?}", state);
+                        println!("State -> {}", state);
                         if let Some(output) = process_state(&mut state) {
-                            println!("Sending command: {}", output);
-                            if let Err(e) = port.write_all(output.as_bytes()) {
-                                eprintln!("{:?}", e);
+                            if !state.wait {
+                                println!("Sending command: {}", output);
+                                if let Err(e) = port.write_all(output.as_bytes()) {
+                                    eprintln!("{:?}", e);
+                                } else {
+                                    state.wait = true;
+                                }
                             }
                         }
                     }
@@ -159,33 +196,40 @@ fn valid_baud(val: &str) -> Result<(), String> {
     let accept: [u32; 10] = [
         300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200,
     ];
-    if accept.contains(&v) {
-        Ok(())
-    } else {
-        Err("Unsupported baud rate".to_string())
+    if !accept.contains(&v) {
+        return Err("Unsupported baud rate".to_string());
     }
+    Ok(())
 }
 
 fn valid_resolution(val: &str) -> Result<(), String> {
     let v = val
         .parse::<u32>()
         .map_err(|_| format!("Invalid resolution '{}' specified", val))?;
-    if v > 0 {
-        Ok(())
-    } else {
-        Err("Resolution can't be zero".to_string())
+    if v == 0 {
+        return Err("Resolution can't be zero".to_string());
     }
+    Ok(())
 }
 
 fn decode_response(buffer: Vec<u8>) -> ExtronResponse {
     if let Ok(command) = String::from_utf8(buffer) {
-        println!("Received command: {}", command);
+        println!("Decoding response: {}", command);
+        if command.len() < 4 {
+            return ExtronResponse::Unknown;
+        }
         if command == "Reconfig" {
             ExtronResponse::Reconfig
         } else {
-            match &command[0..3] {
+            match &command[0..=3] {
                 "Apix" => {
-                    if let Ok(pixels) = u32::from_str(&command[4..]) {
+                    if let Ok(pixels) = {
+                        if command.len() > 4 {
+                            u32::from_str(&command[4..]).map_err(|_| ())
+                        } else {
+                            Err(())
+                        }
+                    } {
                         ExtronResponse::ActivePixels(pixels)
                     } else {
                         eprintln!("Could not decode active horizontal pixels");
@@ -193,7 +237,13 @@ fn decode_response(buffer: Vec<u8>) -> ExtronResponse {
                     }
                 }
                 "Alin" => {
-                    if let Ok(pixels) = u32::from_str(&command[4..]) {
+                    if let Ok(pixels) = {
+                        if command.len() > 4 {
+                            u32::from_str(&command[4..]).map_err(|_| ())
+                        } else {
+                            Err(())
+                        }
+                    } {
                         ExtronResponse::ActiveLines(pixels)
                     } else {
                         eprintln!("Could not decode active vertical lines");
@@ -218,12 +268,17 @@ fn decode_response(buffer: Vec<u8>) -> ExtronResponse {
 
 fn update_state(response: ExtronResponse, state: &mut State) {
     state.incoming_command.shrink_to_fit();
+
+    if response != ExtronResponse::Unknown {
+        state.wait = false;
+    }
+
     match response {
         ExtronResponse::Unknown => {
-            *state = State::default();
+            // Do nothing, sometimes the scaler sends Img and other bits that we don't care about
         }
         ExtronResponse::Reconfig => {
-            *state = State::default();
+            state.reset();
             state.step = CommandFlow::Reconfig;
         }
         ExtronResponse::ActivePixels(h) => {
