@@ -1,0 +1,2 @@
+FROM ghcr.io/cross-rs/armv7-unknown-linux-gnueabihf:main
+RUN dpkg --add-architecture armhf && dpkg --add-architecture arm64 && apt-get update && apt-get install -y libudev-dev:armhf

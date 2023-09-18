@@ -46,6 +46,25 @@ If you're on Linux, you might need to update the serial port permissions.
 * The `extron` binary will be in the `./target/release/` that was just created.
 
 
+#### Cross-compiling
+
+To build the ARM or Windows version on Linux:
+
+* Install cross-rs with `cargo install cross --git https://github.com/cross-rs/cross`
+* Ensure that you have the Docker `buildx` plugin.
+* Windows release:
+  * `cross build --release --target x86_64-pc-windows-gnu`
+* ARM release:
+  * `cross build --release --target armv7-unknown-linux-gnueabihf`
+
+You can cross build for targets by reading https://github.com/cross-rs/cross-toolchains
+
+If you get an error during the cross build that mentions GLIBC: 
+
+    libc.so.6: version GLIBC_2.34 not found (required by /target/release/build/libc-f59ef739d716a352/build-script-build)
+  
+run `cargo clean` then try to build again.
+
 #### Known issues / Improvements
 
 * It assumes that the output resolution is always bigger than the input resolution in both axis.
