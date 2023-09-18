@@ -146,21 +146,26 @@ fn main() -> Result<(), String> {
 
     match port {
         Ok(mut port) => {
+            // Initialise a buffer full of nul bytes
             let mut serial_buf: Vec<u8> = vec![0; 1000];
             loop {
+                // Clear the buffer to ensure there's no lingering junk
+                for b in 0..1000 {
+                    serial_buf[b] = 0;
+                }
                 match port.read(serial_buf.as_mut_slice()) {
-                    Ok(_) => {
-                        // Copy any characters that are not null or line endings.
+                    Ok(num_bytes) => {
                         for b in serial_buf
                             .iter()
                             .filter(|b| **b != 0 && **b != '\n' as u8 && **b != '\r' as u8)
                         {
                             state.incoming_command.push(*b);
                         }
-                        // If the character was not a line feed, the wait for more characters
-                        if serial_buf[0] != '\n' as u8 {
+                        if serial_buf[num_bytes - 1] != 10u8 {
                             continue;
                         }
+
+                        // If the character was not a line feed, the wait for more characters
                         let response = decode_response(state.incoming_command.drain(..).collect());
                         println!("Extron response: {:?}", response);
                         update_state(response, &mut state);
@@ -179,6 +184,7 @@ fn main() -> Result<(), String> {
                     Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
                     Err(e) => eprintln!("{:?}", e),
                 }
+
             }
         }
         Err(e) => {
@@ -317,12 +323,12 @@ fn process_state(state: &mut State) -> Option<String> {
         }
         CommandFlow::SetVSize => {
             // Center horizontally
-            let h = 10240 + (state.output_size.h / 2 - state.input_size.h / 2);
+            let h = 10240 + (state.output_size.h / 2).saturating_sub(state.input_size.h / 2);
             Some(format!("{}{}HCTR\r", ESC, h))
         }
         CommandFlow::SetHCenter => {
             // Center vertically
-            let v = 10240 + (state.output_size.v / 2 - state.input_size.v / 2);
+            let v = 10240 + (state.output_size.v / 2).saturating_sub(state.input_size.v / 2);
             Some(format!("{}{}VCTR\r", ESC, v))
         }
         _ => None,
